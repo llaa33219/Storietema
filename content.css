@@ -1,0 +1,136 @@
+/* Entry Background Extension Styles */
+
+#entry-music-controls {
+  display: none; /* 기본적으로 숨김 - 음악 활성화 시 inline-flex로 변경됨 */
+  align-items: center;
+  margin-left: 15px;
+  animation: fadeIn 0.5s ease-out;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+#audio-spectrum {
+  border-radius: 8px;
+}
+
+/* Make target div positioned relative for absolute positioning of background */
+.css-1cnivlj.e18x7bg08 {
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+#entry-custom-background {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -10 !important;
+  pointer-events: none;
+}
+
+#entry-custom-background iframe,
+#entry-custom-background video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  border: none;
+  object-fit: cover;
+  /* Enhanced iframe properties for YouTube */
+  transform: scale(1.1); /* Slight scale to remove black bars */
+  transform-origin: center center;
+}
+
+/* Specific styling for YouTube iframes */
+#entry-custom-background iframe[src*="youtube.com"] {
+  width: 110vw;
+  height: 110vh;
+  left: -5vw;
+  top: -5vh;
+  transform: none;
+}
+
+/* Music display */
+.music-display {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.music-display.playing .music-icon {
+  color: #667eea;
+  animation: musicPulse 2s ease-in-out infinite;
+}
+
+.music-display.stopped .music-icon {
+  color: #94a3b8;
+}
+
+@keyframes musicPulse {
+  0%, 100% { 
+    transform: scale(1); 
+    opacity: 1; 
+  }
+  50% { 
+    transform: scale(1.1); 
+    opacity: 0.8; 
+  }
+}
+
+.music-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.music-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.music-status {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.music-display.playing .music-status {
+  color: #667eea;
+}
+
+.music-display.stopped .music-status {
+  color: #94a3b8;
+}
+
+.css-1cnivlj, .css-1tk7m4k, .css-b58mdo, .css-v98ur4, .css-1xa19a8 {
+  z-index: 1 !important;
+}
+.css-1ve7v1a {
+  z-index: 20 !important;
+}
+
+.css-1c5lxa3 {
+  background-color: #fff;
+}
+
+/* Animation for smooth transitions */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+} 
