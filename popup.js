@@ -332,40 +332,83 @@ async function saveMusic() {
   // Handle different music types
   try {
     const url = await getMusicUrl(selectedType.value);
+    if (!url) {
+      showStatus('음악 파일 또는 URL을 입력하세요', 'error');
+      return;
+    }
+    
     music.url = url;
 
     musicItems.push(music);
     await saveData();
     renderMusic();
     closeModal('music');
+    
+    // Update content script after saving
+    await updateContentScript();
+    
     showStatus('음악 저장 완료', 'success');
   } catch (error) {
     console.error('Error saving music:', error);
-    showStatus('음악 저장 실패', 'error');
+    showStatus(`음악 저장 실패: ${error.message}`, 'error');
   }
 }
 
 // Get music URL based on type
 async function getMusicUrl(type) {
-  switch (type) {
-    case 'file':
-      const musicFile = document.getElementById('music-file-input').files[0];
-      return musicFile ? await fileToDataURL(musicFile) : '';
-    case 'url':
-      return document.getElementById('music-url-input').value;
-    case 'youtube':
-      return document.getElementById('music-youtube-input').value;
-    default:
-      return '';
+  try {
+    switch (type) {
+      case 'file':
+        const musicFile = document.getElementById('music-file-input').files[0];
+        if (!musicFile) {
+          throw new Error('음악 파일을 선택하세요');
+        }
+        return await fileToDataURL(musicFile);
+      case 'url':
+        const urlValue = document.getElementById('music-url-input').value.trim();
+        if (!urlValue) {
+          throw new Error('음악 URL을 입력하세요');
+        }
+        return urlValue;
+      case 'youtube':
+        const youtubeValue = document.getElementById('music-youtube-input').value.trim();
+        if (!youtubeValue) {
+          throw new Error('유튜브 URL을 입력하세요');
+        }
+        // Validate YouTube URL format
+        const youtubeRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+        if (!youtubeRegex.test(youtubeValue)) {
+          throw new Error('올바른 유튜브 URL을 입력하세요');
+        }
+        return youtubeValue;
+      default:
+        throw new Error('알 수 없는 음악 타입입니다');
+    }
+  } catch (error) {
+    console.error('Error getting music URL:', error);
+    throw error;
   }
 }
 
 // Convert file to data URL
 function fileToDataURL(file) {
   return new Promise((resolve, reject) => {
+    if (!file) {
+      reject(new Error('파일이 선택되지 않았습니다'));
+      return;
+    }
+    
     const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target.result);
-    reader.onerror = reject;
+    reader.onload = (e) => {
+      if (e.target.result) {
+        resolve(e.target.result);
+      } else {
+        reject(new Error('파일 읽기에 실패했습니다'));
+      }
+    };
+    reader.onerror = () => {
+      reject(new Error('파일 읽기 중 오류가 발생했습니다'));
+    };
     reader.readAsDataURL(file);
   });
 }
@@ -969,6 +1012,7 @@ function setupFileUploadListeners() {
     bgImageFileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (file) {
+        console.log('Background image file selected:', file.name, file.type, file.size);
         await autoSaveBackgroundFile(file, 'image');
       }
     });
@@ -978,18 +1022,26 @@ function setupFileUploadListeners() {
     bgVideoFileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (file) {
+        console.log('Background video file selected:', file.name, file.type, file.size);
         await autoSaveBackgroundFile(file, 'video');
       }
     });
   }
 
   if (musicFileInput) {
+    console.log('Music file input listener attached');
     musicFileInput.addEventListener('change', async (e) => {
+      console.log('Music file input change event triggered');
       const file = e.target.files[0];
       if (file) {
+        console.log('Music file selected:', file.name, file.type, file.size);
         await autoSaveMusicFile(file);
+      } else {
+        console.log('No music file selected');
       }
     });
+  } else {
+    console.error('Music file input element not found');
   }
 }
 
@@ -1045,6 +1097,20 @@ async function autoSaveMusicFile(file) {
   try {
     showStatus('음악 파일 업로드 중...', 'info');
     
+    // Validate file type
+    const validAudioTypes = ['audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/m4a', 'audio/aac'];
+    if (!validAudioTypes.includes(file.type)) {
+      showStatus('지원되지 않는 음악 파일 형식입니다. MP3, WAV, OGG, M4A, AAC 파일을 사용하세요.', 'error');
+      return;
+    }
+    
+    // Check file size (limit to 50MB)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (file.size > maxSize) {
+      showStatus('파일 크기가 너무 큽니다. 50MB 이하의 파일을 사용하세요.', 'error');
+      return;
+    }
+    
     // Check if user already entered a name
     const nameInput = document.getElementById('music-name');
     let finalName = nameInput.value.trim();
@@ -1078,11 +1144,14 @@ async function autoSaveMusicFile(file) {
     renderMusic();
     closeModal('music');
     
+    // Update content script after saving
+    await updateContentScript();
+    
     showStatus('음악 자동 저장 완료', 'success');
     
   } catch (error) {
     console.error('Error auto-saving music file:', error);
-    showStatus('음악 파일 저장 실패', 'error');
+    showStatus(`음악 파일 저장 실패: ${error.message}`, 'error');
   }
 }
 

@@ -5,7 +5,9 @@ let offscreenDocumentId = null;
 // Create offscreen document for audio playback
 async function createOffscreenDocument() {
   try {
+    // Check if an offscreen document is already active.
     if (await chrome.offscreen.hasDocument()) {
+      console.log('Offscreen document already exists.');
       return;
     }
     
@@ -17,7 +19,11 @@ async function createOffscreenDocument() {
     
     console.log('Offscreen document created for audio playback');
   } catch (error) {
-    console.error('Error creating offscreen document:', error);
+    if (error.message.includes('Only a single offscreen document may be created')) {
+      console.warn('Offscreen document creation failed, it likely already exists.');
+    } else {
+      console.error('Error creating offscreen document:', error);
+    }
   }
 }
 

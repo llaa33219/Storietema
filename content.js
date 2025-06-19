@@ -1,8 +1,37 @@
 // Entry Background Extension Content Script
+
+// Global error handler for extension context invalidation
+window.addEventListener('unhandledrejection', (event) => {
+  if (event.reason && typeof event.reason === 'object' && event.reason.message) {
+    if (event.reason.message.includes('Extension context invalidated') ||
+        event.reason.message.includes('message port closed') ||
+        event.reason.message.includes('Receiving end does not exist')) {
+      // Silently handle extension reload scenarios
+      event.preventDefault();
+      return;
+    }
+  }
+});
+
+// Global error handler for runtime errors
+window.addEventListener('error', (event) => {
+  if (event.error && event.error.message) {
+    if (event.error.message.includes('Extension context invalidated') ||
+        event.error.message.includes('message port closed') ||
+        event.error.message.includes('Receiving end does not exist')) {
+      // Silently handle extension reload scenarios
+      event.preventDefault();
+      return;
+    }
+  }
+});
+
 let backgroundElement = null;
 let musicControlElement = null;
 let isInitialized = false;
 let progressUpdateInterval = null;
+let currentUrl = window.location.href;
+let urlObserver = null;
 let currentAudioState = {
   isPlaying: false,
   currentTime: 0,
@@ -20,6 +49,115 @@ const STORAGE_KEYS = {
   MUSIC_ENABLED: 'entry_music_enabled',
   MUSIC_VOLUME: 'entry_music_volume'
 };
+
+// Check if current URL is in the Entry Story community
+function isEntryStoryPage() {
+  const url = window.location.href;
+  return url.includes('playentry.org/community/entrystory') || 
+         url.includes('playentry.org/community/entrystory/');
+}
+
+// Clean up existing elements
+function cleanup() {
+  try {
+    console.log('🧹 Cleaning up extension elements...');
+    
+    // Remove background element
+    if (backgroundElement && backgroundElement.parentNode) {
+      backgroundElement.parentNode.removeChild(backgroundElement);
+      backgroundElement = null;
+    }
+    
+    // Remove music controls
+    if (musicControlElement && musicControlElement.parentNode) {
+      musicControlElement.parentNode.removeChild(musicControlElement);
+      musicControlElement = null;
+    }
+    
+    // Stop progress updater
+    if (progressUpdateInterval) {
+      clearInterval(progressUpdateInterval);
+      progressUpdateInterval = null;
+    }
+    
+    // Reset state
+    isInitialized = false;
+    
+    console.log('🧹 Cleanup completed');
+  } catch (error) {
+    console.error('Error during cleanup:', error);
+  }
+}
+
+// Detect URL changes and reinitialize if needed
+function setupUrlChangeDetection() {
+  // Method 1: Listen for popstate events (back/forward navigation)
+  window.addEventListener('popstate', handleUrlChange);
+  
+  // Method 2: Override pushState and replaceState to catch programmatic navigation
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  
+  history.pushState = function(...args) {
+    originalPushState.apply(this, args);
+    setTimeout(handleUrlChange, 10); // Small delay to ensure DOM is updated
+  };
+  
+  history.replaceState = function(...args) {
+    originalReplaceState.apply(this, args);
+    setTimeout(handleUrlChange, 10);
+  };
+  
+  // Method 3: MutationObserver for DOM changes that might indicate navigation
+  if (!urlObserver) {
+    urlObserver = new MutationObserver((mutations) => {
+      // Check if URL changed without a full page reload
+      if (currentUrl !== window.location.href) {
+        handleUrlChange();
+      }
+    });
+    
+    // Observe changes to the entire document
+    urlObserver.observe(document, {
+      childList: true,
+      subtree: true
+    });
+  }
+  
+  // Method 4: Periodic check as fallback
+  setInterval(() => {
+    if (currentUrl !== window.location.href) {
+      handleUrlChange();
+    }
+  }, 500); // Check every 500ms instead of 1000ms for better responsiveness
+}
+
+// Handle URL changes
+function handleUrlChange() {
+  const newUrl = window.location.href;
+  console.log(`🔄 URL changed from ${currentUrl} to ${newUrl}`);
+  currentUrl = newUrl;
+  
+  const shouldBeActive = isEntryStoryPage();
+  
+  if (shouldBeActive && !isInitialized) {
+    console.log('🟢 Entering Entry Story page - initializing extension');
+    // Small delay to ensure DOM is ready
+    setTimeout(() => {
+      init();
+    }, 100);
+  } else if (!shouldBeActive && isInitialized) {
+    console.log('🔴 Leaving Entry Story page - cleaning up extension');
+    cleanup();
+    stopBackgroundAudio();
+  } else if (shouldBeActive && isInitialized) {
+    console.log('🔄 Already on Entry Story page but URL changed - reinitializing');
+    cleanup();
+    setTimeout(() => {
+      init();
+    }, 100);
+  }
+}
 
 // Send message to background to play audio
 async function playBackgroundAudio(url, type, volume = 0.5) {
@@ -107,48 +245,99 @@ async function setBackgroundVolume(volume) {
 // Initialize extension when page loads
 function init() {
   try {
-    if (isInitialized) return;
+    if (isInitialized) {
+      console.log('Extension already initialized, skipping');
+      return;
+    }
     
     // Check if we're on the correct page
-    if (!window.location.href.includes('playentry.org/community/entrystory/')) {
+    if (!isEntryStoryPage()) {
+      console.log('Not on Entry Story page, skipping initialization');
       return;
     }
     
-    const targetLabel = document.querySelector('label.css-1mgwbs1.eq36rvw1');
-    const targetDiv = document.querySelector('div.css-1cnivlj.e18x7bg08');
+    console.log('🚀 Initializing Entry Background Extension...');
     
-    if (!targetLabel || !targetDiv) {
-      return;
-    }
+    // Wait for DOM elements to be available with retry logic
+    const waitForElements = (retries = 10) => {
+      // Selectors for different page types
+      const selectors = {
+        // Entry Story List page (/community/entrystory)
+        list: {
+          musicAnchor: 'label.css-1mgwbs1.eq36rvw1',
+          backgroundTarget: 'div.css-1cnivlj.e18x7bg08',
+          backgroundParent: 'div.css-1cnivlj.e18x7bg08'
+        },
+        // Entry Story View page (/community/entrystory/ID)
+        view: {
+          musicAnchor: 'div.css-1eth5pr.e1yi8oq65 h2',
+          backgroundTarget: 'div.css-1cnivlj',
+          backgroundParent: 'div.css-1cnivlj'
+        }
+      };
+
+      let musicAnchor, backgroundTarget, backgroundParent;
+      let pageType = null;
+
+      // Try view page selectors first
+      musicAnchor = document.querySelector(selectors.view.musicAnchor);
+      backgroundTarget = document.querySelector(selectors.view.backgroundTarget);
+      backgroundParent = document.querySelector(selectors.view.backgroundParent);
+      if (musicAnchor && backgroundTarget) {
+        pageType = 'view';
+        console.log('✅ Detected Entry Story View page structure');
+      } else {
+        // Fallback to list page selectors
+        musicAnchor = document.querySelector(selectors.list.musicAnchor);
+        backgroundTarget = document.querySelector(selectors.list.backgroundTarget);
+        backgroundParent = document.querySelector(selectors.list.backgroundParent);
+        if (musicAnchor && backgroundTarget) {
+          pageType = 'list';
+          console.log('✅ Detected Entry Story List page structure');
+        }
+      }
+      
+      if (pageType && musicAnchor && backgroundTarget) {
+        console.log(`✅ Target elements found (type: ${pageType}), proceeding with initialization`);
+        
+        // Remove background styles from target div
+        removeOriginalStyles(backgroundTarget);
+        
+        // Add music controls
+        addMusicControls(musicAnchor, pageType);
+        
+        // Add background element
+        addBackgroundElement(backgroundParent);
+        
+        // Load saved settings
+        loadSettings();
+        
+        isInitialized = true;
+        console.log('🎉 Entry Background Extension initialized successfully');
+      } else if (retries > 0) {
+        console.log(`⏳ Target elements not found, retrying... (${retries} attempts left)`);
+        setTimeout(() => waitForElements(retries - 1), 200);
+      } else {
+        console.warn('❌ Could not find target elements after multiple attempts');
+      }
+    };
     
-    // Remove background styles from target div
-    removeOriginalStyles();
-    
-    // Add music controls
-    addMusicControls(targetLabel);
-    
-    // Add background element
-    addBackgroundElement(targetDiv);
-    
-    // Load saved settings
-    loadSettings();
-    
-    isInitialized = true;
-    console.log('Entry Background Extension initialized');
+    waitForElements();
   } catch (error) {
     console.error('Error initializing Entry Background Extension:', error);
   }
 }
 
 // Remove original background styles
-function removeOriginalStyles() {
+function removeOriginalStyles(targetDiv) {
   try {
-    const targetDiv = document.querySelector('div.css-1cnivlj.e18x7bg08');
     if (targetDiv) {
       targetDiv.style.background = 'none';
       targetDiv.style.backgroundColor = 'transparent';
       targetDiv.style.backgroundImage = 'none';
       targetDiv.style.boxShadow = 'none';
+    } else {
+      console.warn('No target div provided for style removal');
     }
   } catch (error) {
     console.error('Error removing original styles:', error);
@@ -156,9 +345,9 @@ function removeOriginalStyles() {
 }
 
 // Add music controls next to the label
-function addMusicControls(targetLabel) {
+function addMusicControls(anchorElement, pageType) {
   try {
-    if (musicControlElement) return;
+    if (musicControlElement || !anchorElement) return;
     
     musicControlElement = document.createElement('div');
     musicControlElement.id = 'entry-music-controls';
@@ -174,10 +363,15 @@ function addMusicControls(targetLabel) {
       </div>
     `;
     
-    // Insert before the target label (above it)
-    targetLabel.parentNode.insertBefore(musicControlElement, targetLabel);
+    if (pageType === 'view') {
+      // On view page, insert after the h2 title
+      anchorElement.parentNode.insertBefore(musicControlElement, anchorElement.nextSibling);
+    } else {
+      // On list page, insert before the label
+      anchorElement.parentNode.insertBefore(musicControlElement, anchorElement);
+    }
     
-    console.log('Music display controls added');
+    console.log(`Music display controls added (type: ${pageType})`);
   } catch (error) {
     console.error('Error adding music controls:', error);
   }
@@ -233,55 +427,20 @@ function hideMusicDisplay() {
 }
 
 // Add background element inside target div
-function addBackgroundElement(targetDiv) {
+function addBackgroundElement(parentDiv) {
   try {
-    if (backgroundElement) {
-      console.log('Background element already exists');
-      return;
-    }
-    
-    // Find the css-nendku e18x7bg05 element
-    const targetElement = document.querySelector('div.css-nendku.e18x7bg05');
-    if (!targetElement) {
-      console.warn('Target element (css-nendku e18x7bg05) not found, trying alternative selectors');
-      
-      // Try alternative selectors
-      const alternatives = [
-        'div.css-nendku',
-        'div.e18x7bg05',
-        'div[class*="css-nendku"]',
-        'div[class*="e18x7bg05"]'
-      ];
-      
-      let fallbackElement = null;
-      for (const selector of alternatives) {
-        fallbackElement = document.querySelector(selector);
-        if (fallbackElement) {
-          console.log(`Found alternative target element: ${selector}`);
-          break;
-        }
-      }
-      
-      if (!fallbackElement) {
-        console.error('No suitable target element found for background');
-        return;
-      }
-      
-      // Use fallback element
-      backgroundElement = document.createElement('div');
-      backgroundElement.id = 'entry-custom-background';
-      fallbackElement.parentNode.insertBefore(backgroundElement, fallbackElement.nextSibling);
-      console.log('Background element added after fallback element');
+    if (backgroundElement || !parentDiv) {
+      console.log('Background element already exists or parent not found');
       return;
     }
     
     backgroundElement = document.createElement('div');
     backgroundElement.id = 'entry-custom-background';
     
-    // Insert after the target element
-    targetElement.parentNode.insertBefore(backgroundElement, targetElement.nextSibling);
+    // Insert as the first child of the parent container to ensure it's in the back
+    parentDiv.insertBefore(backgroundElement, parentDiv.firstChild);
     
-    console.log('Background element added after css-nendku e18x7bg05 element');
+    console.log('Background element added');
     
   } catch (error) {
     console.error('Error adding background element:', error);
@@ -298,14 +457,12 @@ function setBackground(url, type) {
     
     console.log('Setting background:', { url, type });
     
+    // Clear previous content
     backgroundElement.innerHTML = '';
-    
+    backgroundElement.style.backgroundImage = 'none';
+
     if (type === 'image') {
       backgroundElement.style.backgroundImage = `url(${url})`;
-      backgroundElement.style.backgroundSize = 'cover';
-      backgroundElement.style.backgroundPosition = 'center';
-      backgroundElement.style.backgroundRepeat = 'no-repeat';
-      console.log('Image background set with cover');
     } else if (type === 'video' || type === 'youtube') {
       let videoElement;
       
@@ -313,12 +470,11 @@ function setBackground(url, type) {
         videoElement = document.createElement('iframe');
         const videoId = extractYouTubeId(url);
         if (videoId) {
-          // Simple and reliable autoplay parameters
-          videoElement.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0`;
-          videoElement.allow = 'autoplay; encrypted-media';
+          // Use youtube-nocookie for better privacy and ensure autoplay with muted
+          videoElement.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&playsinline=1&iv_load_policy=3&modestbranding=1`;
           videoElement.setAttribute('frameborder', '0');
-          videoElement.setAttribute('title', 'Background Video');
-          
+          videoElement.setAttribute('allow', 'autoplay; encrypted-media');
+          videoElement.setAttribute('title', 'YouTube Background Video');
           console.log('YouTube background iframe created');
         } else {
           console.error('Could not extract YouTube video ID from:', url);
@@ -329,7 +485,8 @@ function setBackground(url, type) {
         videoElement.src = url;
         videoElement.autoplay = true;
         videoElement.loop = true;
-        videoElement.muted = true;
+        videoElement.muted = true; // Videos must be muted to autoplay
+        videoElement.playsInline = true; // For iOS compatibility
         console.log('Video element created');
       }
       
@@ -338,13 +495,9 @@ function setBackground(url, type) {
         console.log('Video/iframe added to background element');
       }
     } else if (type === 'none') {
-      backgroundElement.style.backgroundImage = 'none';
+      // Background is already cleared
       console.log('Background cleared');
     }
-    
-    // Make sure background element is visible
-    backgroundElement.style.display = 'block';
-    backgroundElement.style.opacity = '1';
     
   } catch (error) {
     console.error('Error setting background:', error);
@@ -508,43 +661,21 @@ function handleOffscreenNotification(event, data) {
 }
 
 // Check every 0.5 seconds if we need to initialize
-setInterval(() => {
-  try {
-    if (window.location.href.includes('playentry.org/community/entrystory/') && !isInitialized) {
-      init();
-    } else if (!window.location.href.includes('playentry.org/community/entrystory/') && isInitialized) {
-      // Reset if we navigate away
-      console.log('Navigating away from target page, stopping audio');
-      isInitialized = false;
-      
-      // Stop background audio
-      stopBackgroundAudio();
-      
-      // Stop progress updater
-      stopProgressUpdater();
-      
-      if (backgroundElement) {
-        backgroundElement.remove();
-        backgroundElement = null;
-      }
-      if (musicControlElement) {
-        musicControlElement.remove();
-        musicControlElement = null;
-      }
-    }
-  } catch (error) {
-    console.error('Error in interval check:', error);
-  }
-}, 500);
-
 // Also check when page is loaded/refreshed
 window.addEventListener('beforeunload', () => {
   try {
     console.log('Page unloading, stopping background audio');
     stopBackgroundAudio();
   } catch (error) {
-    // Silent fail during page unload is acceptable
-    console.warn('Error during page unload:', error.message);
+    // Silent fail during page unload is acceptable - especially for extension context issues
+    if (error.message && (error.message.includes('Extension context invalidated') || 
+                         error.message.includes('message port closed') ||
+                         error.message.includes('Receiving end does not exist'))) {
+      // Silently handle extension reload scenarios during page unload
+      return;
+    } else {
+      console.warn('Error during page unload:', error.message);
+    }
   }
 });
 
@@ -556,26 +687,41 @@ document.addEventListener('visibilitychange', () => {
     } else {
       console.log('Page visible, checking music settings');
       // Only reload settings if we're on the right page and initialized
-      if (window.location.href.includes('playentry.org/community/entrystory/') && isInitialized) {
+      if (isEntryStoryPage() && isInitialized) {
         // Give a small delay to ensure UI is ready
         setTimeout(() => {
           try {
             // Check if extension context is still valid before accessing storage
-            if (!chrome.storage || !chrome.storage.local) {
-              console.warn('Extension context invalidated, cannot check music settings');
+            if (!chrome.storage || !chrome.storage.local || !chrome.runtime) {
+              // Silently return - extension context invalidated
+              return;
+            }
+            
+            // Check for existing runtime errors
+            if (chrome.runtime.lastError) {
+              // Silently return - runtime error detected
               return;
             }
             
             // Re-check settings to ensure they're current
             chrome.storage.local.get([STORAGE_KEYS.MUSIC_ENABLED], (result) => {
+              // Check for Chrome runtime errors
+              if (chrome.runtime.lastError) {
+                // Silently handle - extension might be reloading
+                return;
+              }
+              
               if (result[STORAGE_KEYS.MUSIC_ENABLED] === false) {
                 console.log('Music disabled on tab return, stopping audio');
                 stopBackgroundAudio();
               }
             });
           } catch (error) {
-            if (error.message && error.message.includes('Extension context invalidated')) {
-              console.warn('Extension context invalidated during visibility change - this is normal during extension reload');
+            // Handle extension context invalidation silently - this is normal during reload
+            if (error.message && (error.message.includes('Extension context invalidated') || 
+                                 error.message.includes('message port closed'))) {
+              // Silently handle extension reload - no need to warn users
+              return;
             } else {
               console.error('Error checking music settings on visibility change:', error);
             }
@@ -584,23 +730,40 @@ document.addEventListener('visibilitychange', () => {
       }
     }
   } catch (error) {
-    console.warn('Error during visibility change:', error.message);
+    // Handle extension context errors silently during visibility changes
+    if (error.message && (error.message.includes('Extension context invalidated') || 
+                         error.message.includes('message port closed') ||
+                         error.message.includes('Receiving end does not exist'))) {
+      // Silently handle extension reload scenarios during visibility change
+      return;
+    } else {
+      console.warn('Error during visibility change:', error.message);
+    }
   }
 });
 
 // Initialize when DOM is ready - with enhanced error handling
 try {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      try {
-        init();
-      } catch (error) {
-        console.error('Error during DOMContentLoaded init:', error);
-      }
-    });
-  } else {
-    init();
-  }
+  // Wait for DOM to be ready before any initialization
+  const initializeWhenReady = () => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        try {
+          console.log('🚀 DOM loaded, starting URL change detection and initial check');
+          setupUrlChangeDetection();
+          handleUrlChange(); // Initial check
+        } catch (error) {
+          console.error('Error during DOMContentLoaded init:', error);
+        }
+      });
+    } else {
+      console.log('🚀 DOM already ready, starting URL change detection and initial check');
+      setupUrlChangeDetection();
+      handleUrlChange(); // Initial check
+    }
+  };
+  
+  initializeWhenReady();
 } catch (error) {
   console.error('Error setting up DOM ready listener:', error);
 }
@@ -659,21 +822,16 @@ async function stopBackgroundAudio() {
     }
   } catch (error) {
     // Handle all extension context errors silently
-    if (error.message && error.message.includes('Extension context invalidated')) {
-      console.log('🔄 Extension reloading - audio stopped locally');
-      // Update local state even if we can't send the message
+    if (error.message && (error.message.includes('Extension context invalidated') ||
+                         error.message.includes('message port closed') ||
+                         error.message.includes('Receiving end does not exist') ||
+                         error.message.includes('The message port closed before'))) {
+      // Silently handle extension reload scenarios - clean up local state
       currentAudioState.isPlaying = false;
       currentAudioState.currentTime = 0;
       currentAudioState.duration = 0;
       updateMusicDisplay('배경음악 없음', false);
       return true; // Consider this successful since we've cleaned up
-    } else if (error.message && error.message.includes('message port closed')) {
-      console.log('🔄 Message port closed - handling locally');
-      currentAudioState.isPlaying = false;
-      currentAudioState.currentTime = 0;
-      currentAudioState.duration = 0;
-      updateMusicDisplay('배경음악 없음', false);
-      return true;
     } else {
       console.error('Error sending stop audio message:', error);
       return false;
@@ -699,6 +857,12 @@ function loadSettings() {
       STORAGE_KEYS.MUSIC_VOLUME
     ], async (result) => {
       try {
+        // Check for Chrome runtime errors first
+        if (chrome.runtime.lastError) {
+          console.log('Chrome runtime error during settings load, skipping');
+          return;
+        }
+        
         console.log('Loaded settings:', result);
         
         // Get background and music arrays

@@ -3,7 +3,7 @@
 #entry-music-controls {
   display: none; /* 기본적으로 숨김 - 음악 활성화 시 inline-flex로 변경됨 */
   align-items: center;
-  margin-left: 15px;
+  margin-left: 15px; /* Default for list page */
   animation: fadeIn 0.5s ease-out;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.95);
@@ -12,12 +12,19 @@
   backdrop-filter: blur(10px);
 }
 
+/* Style adjustments for the view page */
+.css-1eth5pr.e1yi8oq65 #entry-music-controls {
+  margin-left: 0;
+  margin-top: 12px;
+}
+
 #audio-spectrum {
   border-radius: 8px;
 }
 
 /* Make target div positioned relative for absolute positioning of background */
-.css-1cnivlj.e18x7bg08 {
+.css-1cnivlj.e18x7bg08,
+.css-1cnivlj { /* This targets the background container on view pages */
   position: relative !important;
   overflow: hidden !important;
 }
@@ -110,6 +117,12 @@
 
 .music-display.stopped .music-status {
   color: #94a3b8;
+}
+
+/* Ensure the title and music controls on the view page are not obscured */
+.css-1eth5pr {
+  position: relative;
+  z-index: 30;
 }
 
 .css-1cnivlj, .css-1tk7m4k, .css-b58mdo, .css-v98ur4, .css-1xa19a8 {
