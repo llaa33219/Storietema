@@ -462,7 +462,17 @@ function setBackground(url, type) {
     backgroundElement.style.backgroundImage = 'none';
 
     if (type === 'image') {
-      backgroundElement.style.backgroundImage = `url(${url})`;
+      // Create img element instead of using background-image for better control
+      const imgElement = document.createElement('img');
+      imgElement.src = url;
+      imgElement.alt = 'Background Image';
+      imgElement.onerror = () => {
+        console.error('Failed to load background image:', url);
+      };
+      imgElement.onload = () => {
+        console.log('Background image loaded successfully');
+      };
+      backgroundElement.appendChild(imgElement);
     } else if (type === 'video' || type === 'youtube') {
       let videoElement;
       

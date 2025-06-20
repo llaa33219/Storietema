@@ -39,6 +39,29 @@
   pointer-events: none;
 }
 
+#entry-custom-background img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  border: none;
+  object-fit: cover; /* 이미지 비율 유지하면서 화면에 맞춤 */
+  object-position: center; /* 이미지 중앙 정렬 */
+  /* 최적화된 렌더링을 위한 추가 속성 */
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  backface-visibility: hidden;
+  /* 부드러운 로딩 효과 */
+  transition: opacity 0.3s ease-in-out;
+  opacity: 1;
+}
+
+/* 로딩 중일 때 페이드 인 효과 */
+#entry-custom-background img[src=""] {
+  opacity: 0;
+}
+
 #entry-custom-background iframe,
 #entry-custom-background video {
   position: absolute;
